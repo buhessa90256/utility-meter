@@ -1,1 +1,1 @@
-{"name":"utility-meter","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test core.test.mjs","dev":"node server.mjs"}}
+{"name":"utility-meter","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test core.test.mjs features.test.mjs","dev":"node server.mjs"}}
