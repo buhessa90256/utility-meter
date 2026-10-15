@@ -6,6 +6,12 @@ export function number(value,label='القيمة') {
 }
 export const cents = n => Math.round((n + Number.EPSILON)*100);
 export function consumption(input,history,house,kind,month,window=3){
+  if(input.mode==='estimated' && input.method==='historical'){
+    if(typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>2000)throw Error('التقدير التاريخي يحتاج توضيح مصدره');
+    const result={...input,usage:number(input.usage,'الاستهلاك التقديري التاريخي')};
+    if(input.referenceCurrent!=null)result.referenceCurrent=number(input.referenceCurrent,'مرجع العداد الجديد');
+    return result;
+  }
   if(input.mode==='estimated'){
     const records=history.filter(m=>m.month<month && m.rows[house]?.[kind]?.mode!=='estimated').sort((a,b)=>b.month.localeCompare(a.month)).slice(0,window);
     if(!records.length) throw Error('لا توجد أشهر فعلية سابقة لحساب المتوسط. سجّل قراءة فعلية أولاً.');
@@ -40,7 +46,7 @@ export function calculate(draft,history){
 export function previousReading(months,month,index,kind){
   const latest=months.filter(m=>m.month<month).sort((a,b)=>b.month.localeCompare(a.month));
   let estimated=0;
-  for(const record of latest){const r=record.rows[index]?.[kind];if(!r)continue;if(r.mode==='estimated'){estimated+=r.usage;}else{return r.current+estimated;}}
+  for(const record of latest){const r=record.rows[index]?.[kind];if(!r)continue;if(r.referenceCurrent!=null)return number(r.referenceCurrent)+estimated;if(r.mode==='estimated'){estimated+=r.usage;}else{return r.current+estimated;}}
   return '';
 }
 export function validateBackup(data){
@@ -53,5 +59,16 @@ export function validateBackup(data){
     if(seen.has(m.month)||!Array.isArray(m.rows)||m.rows.length!==3||m.rows.some(r=>typeof r.name!=='string'||r.name.length>60)||![3,5,6].includes(Number(m.average)))throw Error('سجل شهري غير صالح أو مكرر');
     seen.add(m.month);acc.push(calculate(m,acc));return acc;
   },[]);
-  return {version:1,settings:data.settings,months,trash:[]};
+  const archive=data.archive??[];
+  if(!Array.isArray(archive)||archive.length>500||archive.some(r=>!r||typeof r.id!=='string'||typeof r.title!=='string'||typeof r.text!=='string'||r.text.length>30000||r.title.length>300))throw Error('الأرشيف التاريخي غير صالح');
+  return {version:1,settings:data.settings,months,trash:[],archive,historyImports:Array.isArray(data.historyImports)?data.historyImports.filter(id=>typeof id==='string').slice(-50):[]};
+}
+export function mergeHistory(existing,incoming){
+  const checked=validateBackup(incoming),current=validateBackup(existing);
+  const months=[...current.months],conflicts=[];
+  for(const month of checked.months){if(months.some(m=>m.month===month.month))conflicts.push(month.month);else months.push(month);}
+  const archive=[...current.archive];
+  for(const record of checked.archive)if(!archive.some(r=>r.id===record.id))archive.push(record);
+  for(const month of checked.months.filter(m=>conflicts.includes(m.month))){const id='import-conflict-'+month.month;if(!archive.some(r=>r.id===id))archive.push({id,title:'نسخة من المحادثة لشهر '+month.month+' — يوجد حساب محفوظ على الجهاز',text:JSON.stringify(month,null,2)});}
+  return {data:{...current,months,archive,trash:existing.trash??[],settings:existing.months.length?existing.settings:checked.settings},added:months.length-current.months.length,conflicts};
 }
