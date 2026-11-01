@@ -50,6 +50,7 @@ const kindName=k=>k==='electricity'?'الكهرباء':'الماي';
 const modeName=m=>({normal:'قراءة فعلية',estimated:'تقدير متوسط',replaced:'عداد جديد'}[m]);
 const sorted=()=>[...data.months].sort((a,b)=>a.month.localeCompare(b.month));
 async function go(view){if(view!=='entry'&&dirty&&!await ask('مغادرة الحساب؟','عندك تعديلات غير محفوظة. تبي تغادر وتلغيها؟'))return;if(view!=='entry')dirty=false;$$('.view').forEach(el=>el.hidden=el.id!==view);$$('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));$('#page-label').textContent=({dashboard:'نظرة عامة',entry:'حساب هذا الشهر',history:'السجل الشهري',settings:'الإعدادات والنسخ'})[view];if(view==='dashboard'){renderDashboard();renderInsights();}if(view==='history')renderHistory();if(view==='settings')renderSettings();if(view==='entry'&&!loadedMonth)loadDraft(thisMonth());updateRoute(view);window.scrollTo({top:0,behavior:'smooth'});}
+$('.brand').onclick=event=>{event.preventDefault();void go('dashboard');};
 $$('[data-view]').forEach(b=>b.onclick=()=>go(b.dataset.view));$$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
 $('.brand').onclick=e=>{e.preventDefault();go('dashboard');};
 $('#today').textContent=new Date().toLocaleDateString('ar-AE',{day:'numeric',month:'long',year:'numeric'});
