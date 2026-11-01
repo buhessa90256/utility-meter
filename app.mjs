@@ -1,8 +1,31 @@
 import {KEY,defaults,calculate,previousReading,validateBackup,number,mergeHistory} from './core.mjs';
-import {decryptHistory} from './history-import.mjs';
+import {decryptHistory,encryptHistory,encode64} from './history-import.mjs';
 import {downloadMonthPdf} from './month-pdf.mjs';
 import {setupPhotoReader} from './meter-ocr.mjs';
-const unlockKey=new URLSearchParams(location.hash.slice(1)).get('unlock');
+const initialFragment=new URLSearchParams(location.hash.slice(1));
+let unlockKey=initialFragment.get('unlock');
+let snapshot=initialFragment.get('snapshot'),snapshotJob=Promise.resolve(),snapshotSequence=0;
+function updateRoute(view='dashboard'){
+  const fragment=new URLSearchParams({view});
+  if(unlockKey)fragment.set('unlock',unlockKey);
+  if(snapshot)fragment.set('snapshot',snapshot);
+  history.replaceState(null,'','#'+fragment.toString());
+}
+async function refreshRecoveryLink(){
+  if(data.readError||!data.months.length)return;
+  const sequence=++snapshotSequence;
+  unlockKey??=encode64(crypto.getRandomValues(new Uint8Array(32)));
+  const saved=JSON.parse(JSON.stringify(data));
+  snapshotJob=(async()=>{
+    const encrypted=await encryptHistory(saved,unlockKey);
+    if(sequence!==snapshotSequence)return;
+    const encoded=encode64(new TextEncoder().encode(JSON.stringify(encrypted)));
+    if(encoded.length>500000)throw Error('السجل كبير لرابط الاسترجاع؛ نزّل نسخة JSON');
+    snapshot=encoded;updateRoute(new URLSearchParams(location.hash.slice(1)).get('view')||'dashboard');
+  })();
+  try{await snapshotJob;}catch(error){notify('حُفظت البيانات على الجهاز، لكن تعذر تحديث رابط الاسترجاع. نزّل نسخة JSON.');}
+}
+
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);
@@ -12,7 +35,9 @@ const thisMonth=()=>`${new Date().getFullYear()}-${String(new Date().getMonth()+
 let data=defaults(),preview=null,editMonth=null,loadedMonth=null,dirty=false,noticeTimer;
 try{const raw=localStorage.getItem(KEY);if(raw)data=validateBackup(JSON.parse(raw));const trash=raw?JSON.parse(raw).trash:[];data.trash=Array.isArray(trash)?trash.slice(-12):[];}catch{notify('تعذر قراءة السجل المحفوظ. لم نغيّر النسخة الأصلية؛ استرجع نسخة احتياطية أو راجع مساحة التخزين.');data.readError=true;}
 function notify(t){$('#notice').textContent=t;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>$('#notice').textContent='',6500);}
-function persist(next){if(data.readError)throw Error('السجل الموجود غير قابل للقراءة. استرجع نسخة احتياطية أولاً لحمايته.');localStorage.setItem(KEY,JSON.stringify(next));data=next;}
+function persist(next){if(data.readError)throw Error('السجل الموجود غير قابل للقراءة. استرجع نسخة احتياطية أولاً لحمايته.');const old=localStorage.getItem(KEY);
+if(old)localStorage.setItem(KEY+'-previous',old);
+localStorage.setItem(KEY,JSON.stringify(next));data=next;void refreshRecoveryLink();}
 function ask(title,text){return new Promise(resolve=>{const d=$('#confirm-dialog');$('#dialog-title').textContent=title;$('#dialog-text').textContent=text;d.showModal();let done=false;const finish=value=>{if(done)return;done=true;d.close();resolve(value);};$('#dialog-yes').onclick=()=>finish(true);$('#dialog-no').onclick=()=>finish(false);d.oncancel=e=>{e.preventDefault();finish(false);};});}
 function renderInsights(){
   let panel=$('#house-insights');if(!panel){panel=document.createElement('article');panel.id='house-insights';panel.className='panel';$('#dashboard').insertBefore(panel,$('#dashboard .tip'));}
@@ -24,7 +49,7 @@ const unit=k=>k==='electricity'?'ك.و.س':'وحدة';
 const kindName=k=>k==='electricity'?'الكهرباء':'الماي';
 const modeName=m=>({normal:'قراءة فعلية',estimated:'تقدير متوسط',replaced:'عداد جديد'}[m]);
 const sorted=()=>[...data.months].sort((a,b)=>a.month.localeCompare(b.month));
-async function go(view){if(view!=='entry'&&dirty&&!await ask('مغادرة الحساب؟','عندك تعديلات غير محفوظة. تبي تغادر وتلغيها؟'))return;if(view!=='entry')dirty=false;$$('.view').forEach(el=>el.hidden=el.id!==view);$$('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));$('#page-label').textContent=({dashboard:'نظرة عامة',entry:'حساب هذا الشهر',history:'السجل الشهري',settings:'الإعدادات والنسخ'})[view];if(view==='dashboard'){renderDashboard();renderInsights();}if(view==='history')renderHistory();if(view==='settings')renderSettings();if(view==='entry'&&!loadedMonth)loadDraft(thisMonth());location.hash=view;window.scrollTo({top:0,behavior:'smooth'});}
+async function go(view){if(view!=='entry'&&dirty&&!await ask('مغادرة الحساب؟','عندك تعديلات غير محفوظة. تبي تغادر وتلغيها؟'))return;if(view!=='entry')dirty=false;$$('.view').forEach(el=>el.hidden=el.id!==view);$$('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));$('#page-label').textContent=({dashboard:'نظرة عامة',entry:'حساب هذا الشهر',history:'السجل الشهري',settings:'الإعدادات والنسخ'})[view];if(view==='dashboard'){renderDashboard();renderInsights();}if(view==='history')renderHistory();if(view==='settings')renderSettings();if(view==='entry'&&!loadedMonth)loadDraft(thisMonth());updateRoute(view);window.scrollTo({top:0,behavior:'smooth'});}
 $$('[data-view]').forEach(b=>b.onclick=()=>go(b.dataset.view));$$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
 $('.brand').onclick=e=>{e.preventDefault();go('dashboard');};
 $('#today').textContent=new Date().toLocaleDateString('ar-AE',{day:'numeric',month:'long',year:'numeric'});
@@ -47,12 +72,40 @@ function renderSettings(){const s=data.settings;$('#name-settings').innerHTML=s.
 $('#settings-form').onsubmit=async e=>{e.preventDefault();if(dirty&&!await ask('تحديث الإعدادات؟','بنلغي تعديلات الحساب غير المحفوظة لتطبيق الإعدادات الجديدة.'))return;try{const settings={names:$$('[data-name]').map(el=>el.value.trim()),electricity:number($('#electricity-rate').value),water:number($('#water-rate').value),currency:$('#currency').value.trim(),average:Number($('#average-window').value)};if(settings.names.some(n=>!n)||!settings.currency)throw Error('أدخل الأسماء والعملة');persist({...data,settings});loadedMonth=null;dirty=false;notify('تم حفظ الإعدادات. الحسابات السابقة تحتفظ بأسعارها وأسمائها.');}catch(error){notify(error.message);}};
 function download(text,name,type){const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 $('#backup').onclick=()=>{try{const raw=data.readError?localStorage.getItem(KEY):JSON.stringify(data,null,2);download(raw,'addaad-backup-'+new Date().toISOString().slice(0,10)+'.json','application/json');localStorage.setItem(KEY+'-backup',new Date().toISOString());renderSettings();notify('تم طلب تنزيل النسخة الاحتياطية. احتفظ فيها بمكان آمن.');}catch{notify('تعذر تنزيل النسخة الاحتياطية');}};
-$('#restore').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>10*1024*1024)throw Error('حجم الملف أكبر من 10 ميغابايت');const next=validateBackup(JSON.parse(await file.text()));if(!await ask('استرجاع النسخة الاحتياطية؟',`الملف فيه ${next.months.length} شهر. بنستبدل السجل الحالي بالكامل. نزّل نسخة من سجلك الحالي أولاً إذا تحتاجه.`))return;localStorage.setItem(KEY+'-before-restore',localStorage.getItem(KEY)??JSON.stringify(defaults()));localStorage.setItem(KEY,JSON.stringify(next));data=next;loadedMonth=null;dirty=false;renderSettings();renderDashboard();notify('تم استرجاع البيانات بنجاح');}catch(error){notify('تعذر الاسترجاع: '+error.message);}finally{e.target.value='';}};
+$('#restore').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>10*1024*1024)throw Error('حجم الملف أكبر من 10 ميغابايت');const next=validateBackup(JSON.parse(await file.text()));if(!await ask('استرجاع النسخة الاحتياطية؟',`الملف فيه ${next.months.length} شهر. بنستبدل السجل الحالي بالكامل. نزّل نسخة من سجلك الحالي أولاً إذا تحتاجه.`))return;localStorage.setItem(KEY+'-before-restore',localStorage.getItem(KEY)??JSON.stringify(defaults()));data.readError=false;persist(next);loadedMonth=null;dirty=false;renderSettings();renderDashboard();notify('تم استرجاع البيانات بنجاح');}catch(error){notify('تعذر الاسترجاع: '+error.message);}finally{e.target.value='';}};
 $('#export-csv').onclick=()=>{if(!data.months.length){notify('احفظ أول شهر قبل التصدير');return;}const rows=[['الشهر','البيت','استهلاك الكهرباء','استهلاك الماي','تكلفة الكهرباء','تكلفة الماي','فرق الفاتورة','الإجمالي','العملة','حالة الكهرباء','حالة الماي'],...sorted().flatMap(m=>m.rows.map(r=>[m.month,r.name,r.electricity.usage,r.water.usage,r.electricityCents/100,r.waterCents/100,r.adjustmentCents/100,r.totalCents/100,m.currency,modeName(r.electricity.mode),modeName(r.water.mode)]))];const safe=v=>{let s=String(v);if(/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};download('\uFEFF'+rows.map(row=>row.map(safe).join(',')).join('\r\n'),'addaad-history.csv','text/csv;charset=utf-8');};
 let installEvent;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e;$('#install').hidden=false;});$('#install').onclick=async()=>{if(!installEvent)return;await installEvent.prompt();installEvent=null;$('#install').hidden=true;};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
-mountFeatures();renderDashboard();if(unlockKey)await loadPrivateHistory(unlockKey);go('dashboard');
+mountFeatures();renderDashboard();
+if(snapshot&&unlockKey&&!data.readError&&!data.months.length){
+  try{
+    const envelope=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(snapshot.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0))));
+    const restored=validateBackup(await decryptHistory(envelope,unlockKey));
+    persist(restored);notify('تم استرجاع السجل من الرابط الخاص بنجاح');
+  }catch{notify('تعذر فتح نسخة الرابط. احتفظ بالرابط الأصلي واسترجع نسخة JSON.');}
+}else if(unlockKey&&!snapshot)await loadPrivateHistory(unlockKey);
+go('dashboard');void refreshRecoveryLink();
+$('#copy-recovery').onclick=async()=>{
+  await refreshRecoveryLink();await snapshotJob.catch(()=>{});
+  if(!snapshot){notify('لا توجد نسخة رابط جاهزة. نزّل JSON أولاً.');return;}
+  try{await navigator.clipboard.writeText(location.href);notify('تم نسخ رابط الاسترجاع الخاص. احفظه ولا تشاركه.');}catch{notify('تعذر النسخ. استخدم تنزيل رابط الاسترجاع.');}
+};
+$('#download-recovery').onclick=async()=>{
+  await refreshRecoveryLink();await snapshotJob.catch(()=>{});
+  if(!snapshot)return notify('تعذر تجهيز الرابط؛ نزّل JSON');
+  download(location.href,'addaad-private-recovery-link.txt','text/plain;charset=utf-8');
+};
+$('#recover-previous').onclick=async()=>{
+  const raw=localStorage.getItem(KEY+'-previous');
+  if(!raw)return notify('لا توجد نسخة محلية سابقة على هذا الجهاز');
+  try{
+    const next=validateBackup(JSON.parse(raw));
+    if(!await ask('استرجاع آخر نسخة محلية؟','بنرجع السجل إلى ما قبل آخر حفظ. النسخة الحالية تبقى محفوظة قبل الاسترجاع.'))return;
+    localStorage.setItem(KEY+'-before-restore',localStorage.getItem(KEY)??'');
+    data.readError=false;persist(next);loadedMonth=null;renderDashboard();notify('تم استرجاع النسخة المحلية السابقة');
+  }catch(error){notify('تعذر الاسترجاع: '+error.message);}
+};
 
 
 function decorateHistoricalFields(saved){

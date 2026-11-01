@@ -1,4 +1,4 @@
-const CACHE='addaad-v6';
+const CACHE='addaad-v7';
 const FILES=['./','./index.html','./style.css','./app.mjs','./month-pdf.mjs','./meter-ocr.mjs','./meter-ocr-core.mjs','./meter-screen.mjs','./paddle-ocr.mjs','./tesseract.min.js','./tesseract-worker.min.js','./history-import.mjs','./core.mjs','./icon.svg','./icon-192.png','./icon-512.png','./manifest.webmanifest'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)));self.skipWaiting();});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('addaad-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
